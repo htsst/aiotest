@@ -1,10 +1,6 @@
 
 find_package (OpenMP)
 
-#include_directories (
-#  
-#  )
-
 add_executable (
   aiotest
   aiotest.cc
@@ -12,6 +8,6 @@ add_executable (
 
 target_link_libraries (
   aiotest
-  omp
+  gomp
   aio
   )
