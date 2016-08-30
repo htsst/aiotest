@@ -149,16 +149,6 @@ int main(int argc, char **argv) {
   iocb *iocbps[num_events];
 
   /*
-   * aio: Call "io_queue_init" to initialize asynchornous io state machine
-   */
-  if (use_libaio) {
-
-
-    for (int i = 0; i < num_events; ++i)
-      iocbps[i] = &iocbs[i];
-  }
-
-  /*
    * Write Kernel
    */
   if (use_libaio) {
