@@ -1,16 +1,16 @@
-### AIOTEST
+## AIOTEST
 
 This is a sample code of kernel asynchronous I/O support for Linux.
 See src/aiotest.cc for details.
 
-#### Required Software
-* cmake
+### Required Software
+* CMake
 
-#### Build
+### Build
 1. `$ cd .; mkdir build; cd build;`
 2. `$ cmake ..`
 
-#### Sample
+### Sample
 * Show usage.
 ```
 $ ./aiotest -h
@@ -26,7 +26,9 @@ $ ./aiotest -a -d -s 100m -e 30 -n 1 -f test
 $ ./aiotest -s 100m -e 30 -n 1 -f test
 ```
 
-#### License
+### License
+#### MIT License
+
 Copyright (c) 2016 Hitoshi Sato and Ryo Mizote
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
