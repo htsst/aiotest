@@ -15,16 +15,14 @@
 #include "timer.h"
 #include "logger.h"
 
-const int MAX_FILENAME_LEN = 255;
-
 void PrintUsage() {
   fprintf(stderr, "Options:\n"
-	  "\t-f [value]: filename prefix\n"
-	  "\t-s [value + {k,m,g}]: (data size in KB(k), MB(m), or GB(g) per event)\n"
-	  "\t-e [value]: number of event per file)\n"
-	  "\t-n [value]: number of files\n"	 
-  	  "\t-d: use direct io\n"
-	  "\t-a: use Linux's kernel asynchronous I/O\n");
+          "\t-f [value]: filename\n"
+          "\t-s [value + {k,m,g}]: (data size in KB(k), MB(m), or GB(g) per event)\n"
+          "\t-e [value]: number of event per file)\n"
+          "\t-n [value]: number of files\n"
+          "\t-d: use direct io\n"
+          "\t-a: use Linux's kernel asynchronous I/O\n");
 }
 
 int main(int argc, char **argv) {
@@ -33,7 +31,7 @@ int main(int argc, char **argv) {
   setvbuf(stdout, (char *)NULL, _IONBF, 0);
 
   Timer timer;
-  char *filename_prefix = NULL;
+  char *filename = NULL;
   int num_files = 0;
   int num_events_per_file = 0;
   int64_t event_size = 0;
@@ -44,7 +42,7 @@ int main(int argc, char **argv) {
   while ((opt = getopt(argc, argv, "f:s:n:e:da")) != -1) {
     switch (opt) {
     case 'f':
-      filename_prefix = optarg;
+      filename = optarg;
       break;
     case 's':
       event_size = atoll(optarg);
@@ -75,7 +73,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (num_files == 0 || event_size == 0 || filename_prefix == NULL || num_events_per_file == 0) {
+  if (num_files == 0 || event_size == 0 || filename == NULL || num_events_per_file == 0) {
     PrintUsage();
     return EXIT_FAILURE;
   }
@@ -113,11 +111,11 @@ int main(int argc, char **argv) {
   const mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
   int fds[num_files];
-  char filenames[num_files][MAX_FILENAME_LEN];
+  size_t fd_offsets[num_files];
 
   for (int i = 0; i < num_files; ++i) {
-    snprintf(filenames[i], MAX_FILENAME_LEN, "%sdata%d", filename_prefix, i);
-    fds[i]= open(filenames[i], flag_w, mode);
+    fd_offsets[i] = i * event_size * num_events_per_file;
+    fds[i]= open(filename, flag_w, mode);
     assert(fds[i] != -1);
   }
 
@@ -166,9 +164,9 @@ int main(int argc, char **argv) {
     timer.Start();
     for (int i = 0; i < num_files; ++i) {
       for (int j = 0; j < num_events_per_file; ++j) {
-	const int idx = num_events_per_file * i + j;
-	const int64_t offset = event_size * idx;
-	io_prep_pwrite(&iocbs[idx], fds[i], buffer + offset, event_size, offset);
+        const int idx = num_events_per_file * i + j;
+        const int64_t offset = event_size * idx;
+        io_prep_pwrite(&iocbs[idx], fds[i], buffer + offset, event_size, fd_offsets[i] + offset);
       }
     }
 
@@ -178,16 +176,16 @@ int main(int argc, char **argv) {
     assert(io_submit(ctx, num_events,(iocb **)&iocbps) == num_events);
     logger.Status("\"io_submit_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
     logger.Status("\"io_submit_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-		  write_size / timer.elapsed_time() / (1 << 30) * 1000);
-    
-    /*
+                  write_size / timer.elapsed_time() / (1 << 30) * 1000);
+
+  /*
      * aio [step3]: Call "io_getevents" to read asynchronous I/O events from the completion queue
      */
     timer.Start();
     assert(io_getevents(ctx, num_events, num_events, events, NULL) == num_events);
     logger.Status("\"io_getevents_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
     logger.Status("\"io_getevents_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-		  write_size / timer.elapsed_time() / (1 << 30) * 1000);
+                  write_size / timer.elapsed_time() / (1 << 30) * 1000);
 
   } else {
     /*
@@ -196,16 +194,16 @@ int main(int argc, char **argv) {
     timer.Start();
     for (int i = 0; i < num_files; ++i) {
       for (int j = 0; j < num_events_per_file; ++j) {
-	const int idx = num_events_per_file * i + j;
-	const int64_t offset = event_size * idx;
-        int64_t written = pwrite(fds[i], buffer + offset, event_size, offset);
+        const int idx = num_events_per_file * i + j;
+        const int64_t offset = event_size * idx;
+        int64_t written = pwrite(fds[i], buffer + offset, event_size, fd_offsets[i] + offset);
         assert(written == event_size);
       }
     }
     logger.Status("\"psync_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
     logger.Status("\"psync_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-		  write_size / timer.elapsed_time() / (1 << 30) * 1000);
-    
+                write_size / timer.elapsed_time() / (1 << 30) * 1000);
+
   }
 
   timer.Start();
