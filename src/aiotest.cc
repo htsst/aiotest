@@ -19,8 +19,8 @@ void PrintUsage() {
   fprintf(stderr, "Options:\n"
           "\t-f [value]: filename\n"
           "\t-s [value + {k,m,g}]: (data size in KB(k), MB(m), or GB(g) per event)\n"
-          "\t-e [value]: number of event per file)\n"
-          "\t-n [value]: number of files\n"
+          "\t-e [value]: number of event per file descpritor)\n"
+          "\t-n [value]: number of file descpritors\n"
           "\t-d: use direct io\n"
           "\t-a: use Linux's kernel asynchronous I/O\n");
 }
@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 
   Timer timer;
   char *filename = NULL;
-  int num_files = 0;
+  int num_fds = 0;
   int num_events_per_file = 0;
   int64_t event_size = 0;
   bool use_libaio = false;
@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
       num_events_per_file =  atoi(optarg);
       break;
     case 'n':
-      num_files =  atoi(optarg);
+      num_fds =  atoi(optarg);
       break;
     case 'd':
       use_directio = true;
@@ -73,13 +73,13 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (num_files == 0 || event_size == 0 || filename == NULL || num_events_per_file == 0) {
+  if (num_fds == 0 || event_size == 0 || filename == NULL || num_events_per_file == 0) {
     PrintUsage();
     return EXIT_FAILURE;
   }
   const int block_size = 512;
 
-  const int64_t write_size = event_size * num_events_per_file * num_files;
+  const int64_t write_size = event_size * num_events_per_file * num_fds;
   char *buffer = NULL;
 
   Logger logger;
@@ -110,10 +110,10 @@ int main(int argc, char **argv) {
     flag_w = O_CREAT | O_TRUNC | O_WRONLY;
   const mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
-  int fds[num_files];
-  size_t fd_offsets[num_files];
+  int fds[num_fds];
+  size_t fd_offsets[num_fds];
 
-  for (int i = 0; i < num_files; ++i) {
+  for (int i = 0; i < num_fds; ++i) {
     fd_offsets[i] = i * event_size * num_events_per_file;
     fds[i]= open(filename, flag_w, mode);
     assert(fds[i] != -1);
@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
 #if 0
   printf("fallocate...");
   timer.Start();
-  for (int i = 0; i < num_files; ++i) {
+  for (int i = 0; i < num_fds; ++i) {
     assert(fallocate(fds[i],
                      0, //mode
                      0, //offset
@@ -134,14 +134,14 @@ int main(int argc, char **argv) {
 #endif
 
   timer.Start();
-  for (int i = 0; i < num_files; ++i)
+  for (int i = 0; i < num_fds; ++i)
     assert(fsync(fds[i]) != -1);
   system("sudo sync > /dev/null");
   system("sudo sysctl -w vm.drop_caches=3 > /dev/null");
   logger.Status("\"fsync_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
 
   io_context_t ctx;
-  const int num_events = num_events_per_file * num_files;
+  const int num_events = num_events_per_file * num_fds;
   io_event events[num_events];
   iocb iocbs[num_events];
   iocb *iocbps[num_events];
@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
      * aio [step1]: Call "io_prep_pwrite" to set up iocb for asynchronous writes
      */ 
     timer.Start();
-    for (int i = 0; i < num_files; ++i) {
+    for (int i = 0; i < num_fds; ++i) {
       for (int j = 0; j < num_events_per_file; ++j) {
         const int idx = num_events_per_file * i + j;
         const int64_t offset = event_size * idx;
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
      * psync: Call "pwrite" to write to a file descriptor at a given offset
      */
     timer.Start();
-    for (int i = 0; i < num_files; ++i) {
+    for (int i = 0; i < num_fds; ++i) {
       for (int j = 0; j < num_events_per_file; ++j) {
         const int idx = num_events_per_file * i + j;
         const int64_t offset = event_size * idx;
@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
   }
 
   timer.Start();
-  for (int i = 0; i < num_files; ++i)
+  for (int i = 0; i < num_fds; ++i)
     assert(fsync(fds[i]) != -1);
 
   system("sudo sync > /dev/null");
@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
     io_destroy(ctx);
   }
 
-  for (int i = 0; i < num_files; ++i)
+  for (int i = 0; i < num_fds; ++i)
     close(fds[i]);
 
   free(buffer);
