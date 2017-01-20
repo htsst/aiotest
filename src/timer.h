@@ -31,7 +31,6 @@ class Timer {
   inline double GetMilliSecond() {
     struct timespec tp;
     clock_gettime(CLOCK_REALTIME, &tp);
-    struct timeval t;
     return (double)tp.tv_sec * 1e+3 + (double)tp.tv_nsec * 1e-6;
   }
 
