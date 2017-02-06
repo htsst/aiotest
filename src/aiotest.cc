@@ -28,7 +28,8 @@ void PrintUsage() {
           "\t-n [value]: number of file descpritors per file\n"
           "\t-f [value]: number of files\n"
           "\t-d: use direct IO(open with O_DIRECT)\n"
-          "\t-a: use Linux's kernel asynchronous I/O\n");
+          "\t-a: use Linux's kernel asynchronous I/O\n"
+          "\t-w: only write test(skip read test)\n");
 }
 
 int main(int argc, char **argv) {
@@ -44,9 +45,10 @@ int main(int argc, char **argv) {
   int64_t event_size = 0;
   bool use_libaio = false;
   bool use_directio = false;
+  bool do_read_test = true;
 
   int opt = 0;
-  while ((opt = getopt(argc, argv, "p:s:n:e:f:dah")) != -1) {
+  while ((opt = getopt(argc, argv, "p:s:n:e:f:dawh")) != -1) {
     switch (opt) {
     case 'p':
       filename_prefix = optarg;
@@ -78,6 +80,9 @@ int main(int argc, char **argv) {
       break;
     case 'a':
       use_libaio = true;
+      break;
+    case 'w':
+      do_read_test = false;
       break;
     case 'h':
       PrintUsage();
@@ -264,112 +269,115 @@ int main(int argc, char **argv) {
     for (int j = 0; j < num_fds_per_file; ++j)
       close(fds[i][j]);
 
-  int flag_r = O_RDONLY;
-  if (use_directio)
-    flag_r |=  O_DIRECT;
+  if (do_read_test) {
 
-  for (int i = 0; i < num_files; ++i) {
-    for (int j = 0; j < num_fds_per_file; ++j) {
-      fds[i][j] = open(filename_prefix, flag_r);
-      assert(fds[i][j] != -1);
-    }
-  }
+    int flag_r = O_RDONLY;
+    if (use_directio)
+      flag_r |=  O_DIRECT;
 
-  /*
-   * Read Kernel
-   */
-  if (use_libaio) {
-
-    /*
-     * aio [step0]: Call "io_queue_init" to initialize asynchornous io state machine
-     */
-    assert(io_queue_init(num_events, &ctx) == 0);
-    for (int i = 0; i < num_events; ++i)
-      iocbps[i] = &iocbs[i];
-
-    /*
-     * aio [step1]: Call "io_prep_pread" to set up iocb for asynchronous reads
-     */ 
-    timer.Start();
     for (int i = 0; i < num_files; ++i) {
       for (int j = 0; j < num_fds_per_file; ++j) {
-        for (int k = 0; k < num_events_per_fd; ++k) {
-          const int idx = (i * num_fds_per_file + j) * num_events_per_fd + k;
-          const int64_t buffer_offset = event_size * idx;
-          const int64_t file_offset = fd_offsets[i][j] + k * event_size;
-          io_prep_pread(&iocbs[idx],
-                        fds[i][j],
-                        buffer + buffer_offset,
-                        event_size,
-                        file_offset);
-        }
+        fds[i][j] = open(filename_prefix, flag_r);
+        assert(fds[i][j] != -1);
       }
     }
 
     /*
-     * aio [step2]: Call "io_submit" to submit asynchronous I/O blocks for processing
-     */ 
-    assert(io_submit(ctx, num_events,(iocb **)&iocbps) == num_events);
-    logger.Status("\"read_io_submit_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
-    logger.Status("\"read_io_submit_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-                  io_size / timer.elapsed_time() / (1 << 30) * 1000);
-
-  /*
-     * aio [step3]: Call "io_getevents" to read asynchronous I/O events from the completion queue
+     * Read Kernel
      */
-    timer.Start();
-    assert(io_getevents(ctx, num_events, num_events, events, NULL) == num_events);
-    logger.Status("\"read_io_getevents_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
-    logger.Status("\"read_io_getevents_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-                  io_size / timer.elapsed_time() / (1 << 30) * 1000);
+    if (use_libaio) {
 
-  } else {
-    /*
-     * psync: Call "pread" to wread to a file descriptor at a given offset
-     */
-    timer.Start();
-    for (int i = 0; i < num_files; ++i) {
-      for (int j = 0; j < num_fds_per_file; ++j) {
-        for (int k = 0; k < num_events_per_fd; ++k) {
-          const int idx = (i * num_fds_per_file + j) * num_events_per_fd + k;
-          const int64_t buffer_offset = event_size * idx;
-          const int64_t file_offset = fd_offsets[i][j] + k * event_size;
-          int64_t read = pread(fds[i][j],
-                               buffer + buffer_offset,
-                               event_size,
-                               file_offset);
-          assert(read == event_size);
+      /*
+       * aio [step0]: Call "io_queue_init" to initialize asynchornous io state machine
+       */
+      assert(io_queue_init(num_events, &ctx) == 0);
+      for (int i = 0; i < num_events; ++i)
+        iocbps[i] = &iocbs[i];
+
+      /*
+       * aio [step1]: Call "io_prep_pread" to set up iocb for asynchronous reads
+       */ 
+      timer.Start();
+      for (int i = 0; i < num_files; ++i) {
+        for (int j = 0; j < num_fds_per_file; ++j) {
+          for (int k = 0; k < num_events_per_fd; ++k) {
+            const int idx = (i * num_fds_per_file + j) * num_events_per_fd + k;
+            const int64_t buffer_offset = event_size * idx;
+            const int64_t file_offset = fd_offsets[i][j] + k * event_size;
+            io_prep_pread(&iocbs[idx],
+                          fds[i][j],
+                          buffer + buffer_offset,
+                          event_size,
+                          file_offset);
+          }
         }
       }
+
+      /*
+       * aio [step2]: Call "io_submit" to submit asynchronous I/O blocks for processing
+       */ 
+      assert(io_submit(ctx, num_events,(iocb **)&iocbps) == num_events);
+      logger.Status("\"read_io_submit_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
+      logger.Status("\"read_io_submit_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
+                    io_size / timer.elapsed_time() / (1 << 30) * 1000);
+
+    /*
+       * aio [step3]: Call "io_getevents" to read asynchronous I/O events from the completion queue
+       */
+      timer.Start();
+      assert(io_getevents(ctx, num_events, num_events, events, NULL) == num_events);
+      logger.Status("\"read_io_getevents_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
+      logger.Status("\"read_io_getevents_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
+                    io_size / timer.elapsed_time() / (1 << 30) * 1000);
+
+    } else {
+      /*
+       * psync: Call "pread" to wread to a file descriptor at a given offset
+       */
+      timer.Start();
+      for (int i = 0; i < num_files; ++i) {
+        for (int j = 0; j < num_fds_per_file; ++j) {
+          for (int k = 0; k < num_events_per_fd; ++k) {
+            const int idx = (i * num_fds_per_file + j) * num_events_per_fd + k;
+            const int64_t buffer_offset = event_size * idx;
+            const int64_t file_offset = fd_offsets[i][j] + k * event_size;
+            int64_t read = pread(fds[i][j],
+                                 buffer + buffer_offset,
+                                 event_size,
+                                 file_offset);
+            assert(read == event_size);
+          }
+        }
+      }
+      logger.Status("\"pread_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
+      logger.Status("\"pread_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
+                    io_size / timer.elapsed_time() / (1 << 30) * 1000);
+
     }
-    logger.Status("\"pread_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
-    logger.Status("\"pread_throughput\": \"%'g\", \"unit\": \"GiB/s\"",
-                  io_size / timer.elapsed_time() / (1 << 30) * 1000);
 
+    timer.Start();
+    for (int i = 0; i < num_files; ++i)
+      for (int j = 0; j < num_fds_per_file; ++j)
+        assert(fsync(fds[i][j]) != -1);
+
+    system("sudo sync > /dev/null");
+    system("sudo sysctl -w vm.drop_caches=3 > /dev/null");
+    logger.Status("\"read_fsync_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
+
+    /*
+     * aio [step4]: Call "io_destroy" to destroy an asynchrnous I/O context.
+     */
+    if (use_libaio) {
+      for (int i = 0; i < num_events; ++i)
+        assert(events[i].res == events[i].obj->u.c.nbytes);
+
+      io_destroy(ctx);
+    }
+
+    for (int i = 0; i < num_files; ++i)
+      for (int j = 0; j < num_fds_per_file; ++j)
+        close(fds[i][j]);
   }
-
-  timer.Start();
-  for (int i = 0; i < num_files; ++i)
-    for (int j = 0; j < num_fds_per_file; ++j)
-      assert(fsync(fds[i][j]) != -1);
-
-  system("sudo sync > /dev/null");
-  system("sudo sysctl -w vm.drop_caches=3 > /dev/null");
-  logger.Status("\"read_fsync_time\": \"%'g\", \"unit\": \"ms\"", timer.Stop());
-
-  /*
-   * aio [step4]: Call "io_destroy" to destroy an asynchrnous I/O context.
-   */
-  if (use_libaio) {
-    for (int i = 0; i < num_events; ++i)
-      assert(events[i].res == events[i].obj->u.c.nbytes);
-
-    io_destroy(ctx);
-  }
-
-  for (int i = 0; i < num_files; ++i)
-    for (int j = 0; j < num_fds_per_file; ++j)
-      close(fds[i][j]);
 
   free(buffer);
 
